@@ -22,7 +22,12 @@ use teams_control::{
 };
 
 /// Path to the Chromium binary.
+///
+/// FreeBSD (best effort) installs Chromium as `chrome` under `/usr/local`.
+#[cfg(target_os = "linux")]
 const CHROMIUM: &str = "/usr/bin/chromium";
+#[cfg(target_os = "freebsd")]
+const CHROMIUM: &str = "/usr/local/bin/chrome";
 
 /// How long to wait for the Teams page to appear after Chromium starts.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);

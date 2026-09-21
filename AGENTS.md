@@ -15,32 +15,40 @@ commit" rule below, which exists partly for this reason.
 
 ## Project overview
 
-`teams-control` is a Linux daemon that drives the Microsoft Teams web client
-from Unix signals. It launches Chromium against `https://teams.microsoft.com`
-with a dedicated profile and the remote-debugging pipe enabled, attaches to the
-Teams page over the Chrome DevTools Protocol (CDP), and synthesizes a Teams
-keyboard shortcut (`Ctrl+Shift+<letter>`) whenever a mapped real-time signal
-arrives. The package, library and binary are all named `teams-control`.
-Version: v0.1.0 (declared as `0.1.0` in `Cargo.toml`, also printed on startup).
+`teams-control` is a daemon that drives the Microsoft Teams web client from
+Unix signals. It launches Chromium against `https://teams.microsoft.com` with a
+dedicated profile and the remote-debugging pipe enabled, attaches to the Teams
+page over the Chrome DevTools Protocol (CDP), and synthesizes a Teams keyboard
+shortcut (`Ctrl+Shift+<letter>`) whenever a mapped real-time signal arrives. The
+package, library and binary are all named `teams-control`. Version: v0.1.0
+(declared as `0.1.0` in `Cargo.toml`, also printed on startup). Licensed
+AGPL-3.0-or-later (see `LICENSE`).
 
 ## Stack
 
 - Rust 2024 edition, std threads and `mpsc` (no async runtime)
-- `libc` — pipes, `dup2`, `signalfd`, `fcntl`, `read`/`write`, and
-  `Command::pre_exec` for the descriptor hand-off to Chromium
+- `libc` — pipes, `dup2`, `signalfd` (Linux) / `sigtimedwait` (FreeBSD),
+  `fcntl`, `read`/`write`, and `Command::pre_exec` for the descriptor hand-off
+  to Chromium
 - `serde_json` — encoding/decoding CDP JSON messages
-- Chromium (external, at `/usr/bin/chromium`) as the Teams runtime
+- Chromium (external) at `/usr/bin/chromium` (Linux) or `/usr/local/bin/chrome`
+  (FreeBSD) as the Teams runtime
 - Dev-dependencies: `tempfile` for the path/PID tests, `serial_test` for the
   tests that mutate the process environment or signal mask
 
 ## Target platforms
 
-Linux on glibc only. The code depends on Linux-specific facilities:
-`signalfd`/`signalfd_siginfo`, runtime-resolved kernel real-time signals,
+Linux on glibc is the primary platform: real-time signals, `signalfd`, the
 `pipe`/`dup2` placement of descriptors 3 and 4 for Chromium's
 `--remote-debugging-pipe`, and `F_DUPFD_CLOEXEC`. `libc::SIGRTMIN()` is a
-function on glibc (musl exposes a constant instead), which is another reason
-glibc is assumed. No effort is made to support other platforms.
+function on glibc and resolved at runtime.
+
+FreeBSD is supported on a best-effort basis. It has no `signalfd`, so
+`src/signals.rs` carries a FreeBSD backend built on `sigtimedwait` and a
+hand-rolled `SIGRTMIN` (the `libc` crate does not export it for FreeBSD), and
+`CHROMIUM` points at `/usr/local/bin/chrome`. FreeBSD is compile-checked in CI
+and packaged best-effort, but is neither run nor validated. No other platforms
+are targeted.
 
 ## Layout
 
@@ -53,8 +61,9 @@ glibc is assumed. No effort is made to support other platforms.
   encoding, id→response routing, and the pipe/`dup2` helpers
 - `src/shortcut.rs` — the `Shortcut` enum, its signal offsets, key letters and
   the `Ctrl+Shift+<letter>` keystroke builder
-- `src/signals.rs` — `Signals::install`/`next` over `signalfd`, plus
-  `resolve_base` for the runtime `SIGRTMIN`
+- `src/signals.rs` — `Signals::install`/`next`, with a Linux `signalfd` backend
+  and a FreeBSD `sigtimedwait` backend, plus `resolve_base` for the runtime
+  `SIGRTMIN`
 - `src/teams.rs` — Teams target discovery, attach, `wait_for_teams`, and
   `send_shortcut` dispatch
 - `src/paths.rs` — XDG base-directory resolution, the Chromium profile path, and
@@ -64,6 +73,12 @@ glibc is assumed. No effort is made to support other platforms.
   `signals.rs`, `cdp.rs` and `teams.rs` cover the matching modules
 - `README.markdown` — user-facing docs: description, requirements, build/run,
   the XDG paths, and the signal→shortcut table with `kill` examples
+- `LICENSE` — the AGPL-3.0 text
+- `scripts/build-freebsd-pkg.py` — builds a FreeBSD `.pkg` from a staged install
+  tree using GNU `tar` + `zstd`; needs no FreeBSD host or `pkg` binary
+- `.woodpecker/release.yaml` — tag-triggered (`refs/tags/v*`) pipeline that
+  builds the Debian/Ubuntu `.deb`s and the best-effort FreeBSD `.pkg`, then
+  publishes them to a GitHub Release (`--repo TheHolm/teams-control`)
 - `.gitignore` — ignores `/target` and `Cargo.lock` (this is a binary crate but
   the lock file is deliberately not tracked)
 
@@ -72,7 +87,8 @@ glibc is assumed. No effort is made to support other platforms.
 Each action maps to a real-time signal above `SIGRTMIN`. The mapping starts at
 `SIGRTMIN+2` because glibc reserves `SIGRTMIN+0`/`+1` (`SIGCANCEL`/`SIGSETXID`)
 and `libc::SIGRTMIN()` is resolved at runtime, so the numeric values are not
-hardcoded anywhere.
+hardcoded anywhere. On FreeBSD the base is the hardcoded `65` (`sys/signal.h`),
+since the `libc` crate does not export `SIGRTMIN` there.
 
 | Signal | Action | Keys |
 | --- | --- | --- |
@@ -95,8 +111,11 @@ Work in progress. Current known issues:
   dispatch loop) has no automated coverage; it needs a real Chromium and a
   signed-in Teams profile. Everything else is covered by the Chromium-free
   integration tests.
-- Chromium is hardcoded to `/usr/bin/chromium`; there is no PATH search or
-  override.
+- Chromium is hardcoded (`/usr/bin/chromium` on Linux, `/usr/local/bin/chrome`
+  on FreeBSD); there is no PATH search or override.
+- FreeBSD is compile-checked and packaged best-effort only. The
+  `sigtimedwait` backend, the hand-rolled `SIGRTMIN = 65`, and the
+  `/usr/local/bin/chrome` path have never been run on FreeBSD.
 - Only the first Teams page target is tracked. The code re-attaches if the page
   is recreated, but additional targets are ignored.
 - The PID file is created with `create_new`, so a crash leaves a stale file that
@@ -107,7 +126,9 @@ Work in progress. Current known issues:
 ## Commands
 
 - Build/check: `cargo build`
-- Run: `cargo run` (requires Chromium at `/usr/bin/chromium`; see README)
+- Run: `cargo run` (requires Chromium; see README)
+- FreeBSD check: `cargo check --target x86_64-unknown-freebsd` (needs
+  `rustup target add x86_64-unknown-freebsd`); CI runs the same cross-check
 - Tests: `cargo test` (all Chromium-free; `tests/common` builds the fake CDP
   peer from real pipes)
 - Lint: `cargo clippy --all-targets -- -D warnings`

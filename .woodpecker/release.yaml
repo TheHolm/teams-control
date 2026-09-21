@@ -1,0 +1,112 @@
+# Builds and publishes release artifacts to a GitHub Release. Only ever runs on
+# tag pushes matching v* (this repo's tag convention - see AGENTS.md's release
+# process and `git tag -l`). Never runs on ordinary branch pushes or pull
+# requests.
+#
+# The three package steps are independent of each other (`depends_on: []` puts
+# the workflow into DAG mode, so they run concurrently); only
+# publish-github-release waits for all of them.
+#
+# freebsd-pkg is best-effort: teams-control is Linux-first and its FreeBSD
+# support compiles but is otherwise unvalidated, so that step is marked
+# `failure: ignore` and a packaging break there never blocks the Linux release.
+#
+# Requirements for this to work:
+#   - A `github_token` secret is set on this repo in Woodpecker (Project
+#     Settings -> Secrets), holding a GitHub PAT scoped to Contents:
+#     read/write on TheHolm/teams-control, restricted to the "tag" event.
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+steps:
+  - name: freebsd-pkg
+    image: rust:1.92-trixie
+    depends_on: []
+    failure: ignore
+    environment:
+      CARGO_TARGET_DIR: target/freebsd
+      CARGO_TARGET_X86_64_UNKNOWN_FREEBSD_LINKER: clang
+      RUSTFLAGS: "-C link-arg=--target=x86_64-unknown-freebsd15 -C link-arg=--sysroot=/opt/freebsd-sysroot -C link-arg=-fuse-ld=lld -C link-arg=-B/opt/freebsd-sysroot/usr/lib"
+    commands:
+      - rustup target add x86_64-unknown-freebsd
+      - apt-get update && apt-get install -y --no-install-recommends clang lld zstd python3
+      - mkdir -p /opt/freebsd-sysroot
+      # Minimal FreeBSD 15.1-RELEASE sysroot: the runtime libraries and CRT
+      # objects needed to link a Rust binary against FreeBSD's libc/libthr.
+      # Every member needs the leading `./`; GNU tar does not normalize it away
+      # when extracting explicitly named members.
+      - curl -fsSL -o /tmp/base.txz https://download.freebsd.org/releases/amd64/amd64/15.1-RELEASE/base.txz
+      - >-
+        tar -xJf /tmp/base.txz -C /opt/freebsd-sysroot
+        ./lib/libc.so.7 ./usr/lib/libc.so ./usr/lib/libc_nonshared.a
+        ./lib/libm.so.5 ./usr/lib/libm.so
+        ./lib/libthr.so.3 ./usr/lib/libthr.so ./usr/lib/libpthread.so
+        ./lib/libgcc_s.so.1 ./usr/lib/libgcc_s.so
+        ./usr/lib/crt1.o ./usr/lib/Scrt1.o ./usr/lib/crti.o ./usr/lib/crtn.o
+        ./usr/lib/crtbegin.o ./usr/lib/crtbeginS.o ./usr/lib/crtbeginT.o
+        ./usr/lib/crtend.o ./usr/lib/crtendS.o
+      - rm -f /tmp/base.txz
+      - cargo build --release --target x86_64-unknown-freebsd
+      - >-
+        mkdir -p dist stage-root/usr/local/bin
+        stage-root/usr/local/share/doc/teams-control
+      - cp target/freebsd/x86_64-unknown-freebsd/release/teams-control stage-root/usr/local/bin/teams-control
+      - chmod 555 stage-root/usr/local/bin/teams-control
+      - cp README.markdown LICENSE stage-root/usr/local/share/doc/teams-control/
+      - chmod 644 stage-root/usr/local/share/doc/teams-control/README.markdown stage-root/usr/local/share/doc/teams-control/LICENSE
+      - >-
+        python3 scripts/build-freebsd-pkg.py
+        --version "${CI_COMMIT_TAG#v}"
+        --stage-root stage-root
+        --output "dist/teams-control-${CI_COMMIT_TAG#v}-freebsd-amd64.pkg"
+      # Fail if the binary did not make it into the built .pkg.
+      - zstd -dc dist/teams-control-*.pkg | tar -tf - | grep -qF 'usr/local/bin/teams-control'
+
+  - name: deb-trixie
+    image: rust:1.92-trixie
+    depends_on: []
+    environment:
+      CARGO_TARGET_DIR: target/deb-trixie
+    commands:
+      - cargo install cargo-deb --locked
+      - mkdir -p dist
+      - cargo deb --deb-revision "1~trixie"
+      - cp target/deb-trixie/debian/*.deb dist/
+      # Fail the release if the binary did not make it into the .deb.
+      - dpkg-deb -c target/deb-trixie/debian/*.deb | grep -qF 'usr/bin/teams-control'
+
+  - name: deb-ubuntu2604
+    image: ubuntu:26.04
+    depends_on: []
+    environment:
+      CARGO_TARGET_DIR: target/deb-ubuntu2604
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates build-essential
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+      - . "$HOME/.cargo/env"
+      - cargo install cargo-deb --locked
+      - mkdir -p dist
+      - cargo deb --deb-revision "1~ubuntu2604"
+      - cp target/deb-ubuntu2604/debian/*.deb dist/
+      - dpkg-deb -c target/deb-ubuntu2604/debian/*.deb | grep -qF 'usr/bin/teams-control'
+
+  - name: publish-github-release
+    image: rust:1.92-trixie
+    depends_on: [freebsd-pkg, deb-trixie, deb-ubuntu2604]
+    environment:
+      GH_TOKEN:
+        from_secret: github_token
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg
+      - mkdir -p -m 755 /etc/apt/keyrings
+      - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+      - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+      - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+      - apt-get update && apt-get install -y --no-install-recommends gh
+      - >-
+        gh release create "$CI_COMMIT_TAG" dist/*
+        --repo TheHolm/teams-control
+        --title "$CI_COMMIT_TAG"
+        --generate-notes
