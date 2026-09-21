@@ -15,6 +15,7 @@ use std::{
 };
 use teams_control::{
     cdp::{CDP_TIMEOUT, Cdp, make_fd_safe, make_pipe},
+    desktop,
     paths::{pid_path, profile_dir, remove_pid_file, write_pid_file},
     shortcut::{ALL as ALL_SHORTCUTS, Shortcut},
     signals::{Signals, resolve_base},
@@ -56,6 +57,7 @@ fn start_chromium() -> io::Result<(Child, Arc<Cdp>)> {
     command
         .arg(format!("--user-data-dir={}", profile_dir.display()))
         .arg("--remote-debugging-pipe")
+        .arg(format!("--class={}", desktop::WM_CLASS))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=DialMediaRouteProvider")
@@ -165,6 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Block signals before spawning Chromium (and its CDP reader thread) so
     // every thread inherits the block.
     let signals = install_signals(base)?;
+
+    // The desktop entry is cosmetic and best effort: a failure only means the
+    // window keeps the default Chromium icon, so it must not abort startup.
+    if let Err(error) = desktop::write() {
+        eprintln!("Cannot write desktop entry: {error}");
+    }
 
     let (mut chromium, cdp) = start_chromium()?;
 
