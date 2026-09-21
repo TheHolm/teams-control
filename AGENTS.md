@@ -82,7 +82,14 @@ are targeted.
   tree using GNU `tar` + `zstd`; needs no FreeBSD host or `pkg` binary
 - `.woodpecker/release.yaml` — tag-triggered (`refs/tags/v*`) pipeline that
   builds the Debian/Ubuntu `.deb`s and the best-effort FreeBSD `.pkg`, then
-  publishes them to a GitHub Release (`--repo TheHolm/teams-control`)
+  publishes them to a GitHub Release (`--repo TheHolm/teams-control`). The
+  release body is rendered from the tag's `## v<version>` section in
+  `RELEASE_NOTES.md` (the `### User-facing changes` bullets plus a Full
+  Changelog compare link), so a release tag must have an entry there or the
+  publish step fails; `gh --generate-notes` is not used because the GitHub
+  mirror has no pull requests. Publishing is idempotent: if the release already
+  exists (a moved or re-pushed tag) it is edited and its assets re-uploaded with
+  `--clobber` instead of `gh release create` failing
 - `.gitignore` — ignores `/target` and `Cargo.lock` (this is a binary crate but
   the lock file is deliberately not tracked)
 

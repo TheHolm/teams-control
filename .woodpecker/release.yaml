@@ -11,6 +11,13 @@
 # support compiles but is otherwise unvalidated, so that step is marked
 # `failure: ignore` and a packaging break there never blocks the Linux release.
 #
+# The GitHub Release body is rendered from the matching `## v<version>` section
+# of RELEASE_NOTES.md: the user-facing changes plus a Full Changelog compare
+# link. A tag whose version has no entry there fails the pipeline instead of
+# publishing an empty release. `gh --generate-notes` is deliberately not used -
+# this repo is developed on Gitea, so the GitHub mirror has no pull requests and
+# GitHub's generator emits nothing but the compare link.
+#
 # Requirements for this to work:
 #   - A `github_token` secret is set on this repo in Woodpecker (Project
 #     Settings -> Secrets), holding a GitHub PAT scoped to Contents:
@@ -113,8 +120,43 @@ steps:
       - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
       - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
       - apt-get update && apt-get install -y --no-install-recommends gh
-      - >-
-        gh release create "$CI_COMMIT_TAG" dist/*
-        --repo TheHolm/teams-control
-        --title "$CI_COMMIT_TAG"
-        --generate-notes
+      # Render the release body from RELEASE_NOTES.md. Only the `### User-facing
+      # changes` subsection is published; `### Low-level detail` is cut off at the
+      # heading so it stays in the file. A tag with no matching section fails
+      # here rather than publishing an empty body.
+      - |
+        version="${CI_COMMIT_TAG#v}"
+        awk -v heading="## v$version" '
+          $0 == heading { in_section = 1; next }
+          in_section && /^## / { exit }
+          in_section && /^### Low-level detail/ { exit }
+          in_section { print }
+        ' RELEASE_NOTES.md > /tmp/release-body.md
+        test -s /tmp/release-body.md
+      # Append the compare link that GitHub's generated notes would have shown.
+      # The previous tag is looked up in the Gitea clone; omit the line if this is
+      # the first release.
+      - |
+        git fetch --tags --force 2>/dev/null || true
+        previous="$(git describe --tags --abbrev=0 "${CI_COMMIT_TAG}^" 2>/dev/null || true)"
+        if [ -n "$previous" ]; then
+          printf '\n**Full Changelog**: https://github.com/TheHolm/teams-control/compare/%s...%s\n' \
+            "$previous" "$CI_COMMIT_TAG" >> /tmp/release-body.md
+        fi
+      # Create the release, or update it in place when a tag is re-released
+      # (e.g. a moved tag), so republishing is idempotent.
+      - |
+        if gh release view "$CI_COMMIT_TAG" --repo TheHolm/teams-control >/dev/null 2>&1; then
+          gh release edit "$CI_COMMIT_TAG" \
+            --repo TheHolm/teams-control \
+            --title "$CI_COMMIT_TAG" \
+            --notes-file /tmp/release-body.md
+          gh release upload "$CI_COMMIT_TAG" dist/* \
+            --repo TheHolm/teams-control \
+            --clobber
+        else
+          gh release create "$CI_COMMIT_TAG" dist/* \
+            --repo TheHolm/teams-control \
+            --title "$CI_COMMIT_TAG" \
+            --notes-file /tmp/release-body.md
+        fi
