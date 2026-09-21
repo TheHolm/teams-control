@@ -68,9 +68,35 @@ Paths follow the XDG Base Directory specification:
 
 - Chromium profile: `${XDG_DATA_HOME:-~/.local/share}/chromium-teams`
 - PID file: `${XDG_RUNTIME_DIR:-/tmp}/teams-control.pid`
+- Desktop entry: `${XDG_DATA_HOME:-~/.local/share}/applications/teams-control.desktop`
 
 The PID file is created with `create_new` and mode `0600`, so a second instance
 refuses to start rather than taking over, and other users cannot read it.
+
+## Icon
+
+The window is a Chromium app window, so without help a desktop environment has
+only Chromium's own icon to show for it. The daemon therefore launches Chromium
+with `--class=teams-control` and, on startup, writes a matching desktop entry
+whose `StartupWMClass` is `teams-control`. Point the entry's `Icon=` at a Teams
+logo and the dock, taskbar and app switcher pick it up:
+
+```sh
+# Download the Microsoft Teams logo from Wikipedia (Microsoft Teams article on
+# Wikimedia Commons) and save it as:
+~/.local/share/Icons/Microsoft_Office_Teams.svg.webp
+```
+
+The daemon only creates the desktop entry; it never creates or downloads the
+icon. The Teams logo is a trademark of Microsoft and is copyrighted, so it is
+deliberately not bundled with this AGPL-licensed project. It is referenced here
+only to identify the Teams window. Desktop environments only render PNG, SVG and
+XPM reliably, so if the file does not appear, use an SVG or PNG copy of the logo
+instead.
+
+If the window still shows Chromium's icon, its `WM_CLASS` does not match the
+entry. Check it with `xprop | grep WM_CLASS` on X11; it should report
+`teams-control`.
 
 ## Tests
 
@@ -103,7 +129,7 @@ AGPL-3.0-or-later. See `LICENSE`.
 ## How it works
 
 1. Chromium is started with `--user-data-dir=<profile>`, `--remote-debugging-pipe`,
-   and `--app=https://teams.microsoft.com`.
+   `--class=teams-control`, and `--app=https://teams.microsoft.com`.
 2. The child's ends of two pipes are duplicated onto file descriptors 3 and 4,
    the layout Chromium expects for the debugging pipe.
 3. The daemon attaches to the Teams page target and keeps its flattened CDP

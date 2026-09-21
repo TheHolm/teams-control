@@ -8,6 +8,7 @@
 //! exercised without a browser.
 
 pub mod cdp;
+pub mod desktop;
 pub mod paths;
 pub mod shortcut;
 pub mod signals;

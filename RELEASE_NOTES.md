@@ -1,5 +1,29 @@
 # Release notes
 
+## v0.1.1
+
+### User-facing changes
+
+- The Teams window can now be labelled with the Microsoft Teams icon instead of
+  Chromium's. The daemon launches Chromium with `--class=teams-control` and
+  writes `$XDG_DATA_HOME/applications/teams-control.desktop` on startup. Place a
+  Teams logo at `~/.local/share/Icons/Microsoft_Office_Teams.svg.webp` and the
+  desktop environment picks it up. The logo is Microsoft's trademark and is not
+  bundled; download it yourself (see README).
+
+### Low-level detail
+
+- Added `src/desktop.rs`, which composes the desktop-entry path and icon path
+  from the XDG data home, renders a `StartupWMClass=teams-control` entry
+  pointing at an absolute `Icon=` path, and writes it idempotently. Covered by
+  the new Chromium-free `tests/desktop.rs`.
+- `start_chromium` now passes `--class=teams-control` (the `WM_CLASS` constant)
+  so the window can be matched to the generated entry.
+- The desktop entry is written before Chromium launches and a failure is a
+  warning only, since the icon is cosmetic.
+- Icon association remains desktop-environment dependent and is not verified in
+  CI; the icon file is never installed by the packages.
+
 ## v0.1.0
 
 Initial release.

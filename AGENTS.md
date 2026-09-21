@@ -68,9 +68,13 @@ are targeted.
   `send_shortcut` dispatch
 - `src/paths.rs` — XDG base-directory resolution, the Chromium profile path, and
   PID-file read/write
+- `src/desktop.rs` — generates `$XDG_DATA_HOME/applications/teams-control.desktop`
+  with `StartupWMClass=teams-control` and an absolute `Icon=` path, so a desktop
+  environment can label the Chromium window; the icon file itself is downloaded
+  by the user (Microsoft's Teams logo is trademarked and not redistributable)
 - `tests/` — integration tests, all Chromium-free: `common/mod.rs` holds the
   `FakeCdp` pipe-based CDP peer and an `EnvGuard`; `shortcut.rs`, `paths.rs`,
-  `signals.rs`, `cdp.rs` and `teams.rs` cover the matching modules
+  `signals.rs`, `cdp.rs`, `teams.rs` and `desktop.rs` cover the matching modules
 - `README.markdown` — user-facing docs: description, requirements, build/run,
   the XDG paths, and the signal→shortcut table with `kill` examples
 - `LICENSE` — the AGPL-3.0 text
@@ -122,6 +126,11 @@ Work in progress. Current known issues:
   must be removed before the daemon will start again.
 - Sign-in is manual: the dedicated profile must be authenticated once through
   Chromium before the shortcuts mean anything.
+- The Teams window icon is best-effort and desktop-environment dependent: the
+  daemon writes the `.desktop` entry and passes `--class`, but whether the DE
+  matches `WM_CLASS` to `StartupWMClass` (and renders the icon) is never checked
+  in CI. The icon file is user-supplied; Microsoft's Teams logo cannot be
+  bundled.
 
 ## Commands
 
