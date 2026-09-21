@@ -20,11 +20,20 @@ fn drain(signals: &Signals) {
     while signals.next().unwrap().is_some() {}
 }
 
-/// The base matches libc's own `SIGRTMIN`, since glibc reserves the first
-/// real-time signals for itself.
+/// On Linux the base matches libc's own `SIGRTMIN`, since glibc reserves the
+/// first real-time signals for itself.
+#[cfg(target_os = "linux")]
 #[test]
 fn base_matches_libc() {
     assert_eq!(resolve_base(), libc::SIGRTMIN());
+}
+
+/// On FreeBSD the base is the hardcoded `SIGRTMIN` from `sys/signal.h`, which
+/// the `libc` crate does not export.
+#[cfg(target_os = "freebsd")]
+#[test]
+fn base_matches_freebsd_sigrtmin() {
+    assert_eq!(resolve_base(), 65);
 }
 
 /// An installed signal raised at the process is read back from the descriptor.

@@ -41,9 +41,13 @@ kill "$pid"               # stop (SIGTERM)
 
 ## Requirements
 
-- Linux on glibc. The daemon uses `signalfd`, real-time signals, raw
-  descriptor handling, and Chromium's `--remote-debugging-pipe` protocol.
-- Chromium installed at `/usr/bin/chromium`.
+- Linux on glibc is the primary platform: the daemon uses `signalfd`, real-time
+  signals, raw descriptor handling, and Chromium's `--remote-debugging-pipe`
+  protocol.
+- FreeBSD is supported on a best-effort basis only. It compiles and uses a
+  `sigtimedwait`-based signal backend, but the FreeBSD path is not validated at
+  runtime.
+- Chromium at `/usr/bin/chromium` (Linux) or `/usr/local/bin/chrome` (FreeBSD).
 - A Teams account signed in through the daemon's dedicated profile. Sign in
   once; the profile persists.
 
@@ -76,8 +80,25 @@ cargo test
 
 The suite runs without Chromium or a Teams account. The CDP client is exercised
 against a fake peer built from ordinary pipes, and the signal handling is
-tested with `signalfd` and self-delivered signals. Only launching Chromium and
-the daemon's own run loop are not covered, since they need a live browser.
+tested with self-delivered signals (`signalfd` on Linux; the FreeBSD backend
+compiles but is not run here). Only launching Chromium and the daemon's own run
+loop are not covered, since they need a live browser.
+
+## Packages
+
+Tagged releases (`v*`) are built by the Woodpecker pipeline in
+`.woodpecker/release.yaml` and published to GitHub Releases:
+
+- `teams-control_<version>-1~trixie_amd64.deb` (Debian trixie)
+- `teams-control_<version>-1~ubuntu2604_amd64.deb` (Ubuntu 26.04)
+- `teams-control-<version>-freebsd-amd64.pkg` (FreeBSD, best effort)
+
+The `.deb` packages install the binary to `/usr/bin/teams-control`; the FreeBSD
+`.pkg` installs to `/usr/local/bin/teams-control`.
+
+## License
+
+AGPL-3.0-or-later. See `LICENSE`.
 
 ## How it works
 
@@ -87,7 +108,8 @@ the daemon's own run loop are not covered, since they need a live browser.
    the layout Chromium expects for the debugging pipe.
 3. The daemon attaches to the Teams page target and keeps its flattened CDP
    session id.
-4. It blocks the mapped signals and reads them synchronously from a `signalfd`.
+4. It blocks the mapped signals and reads them synchronously (`signalfd` on
+   Linux, `sigtimedwait` on FreeBSD).
 5. On a shortcut signal it dispatches the `Ctrl+Shift+<letter>` sequence. If the
    session has gone stale (the page was recreated), it re-attaches and retries
    once.
